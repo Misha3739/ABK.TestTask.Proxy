@@ -6,7 +6,7 @@ using System.Threading;
 
 namespace Proxy {
 	public class ServersManager : IServersManager {
-		public IDictionary<int, Server> Servers { get; }
+		internal IDictionary<int, Server> Servers { get; }
 		private readonly object locker;
 
 		public ServersManager(IList<Server> servers) {
@@ -20,19 +20,22 @@ namespace Proxy {
 
 			locker = new object();
 		}
-		public int GetAvailableServerKey() {
+		public Server FindServerAndIncrement() {
+			//Поиск наименее загруженного сервера и увеличение его счетчика текущих соединений должны быть атомарной операцией
 			lock (locker) {
-				var key = Servers.OrderBy(s => s.Value.CurrentConnections).First().Key;
-				Servers[key].CurrentConnections += 1;
-				return key;
+				//Поиск осуществляется с помощью сортировки по наименьшему числу одновременных соединений
+				var server = Servers.OrderBy(s => s.Value.CurrentConnections).First().Value;
+				//Возможность что от какого-то сервера отвалится соедниение в момент выполнения функции поиска не исключена (при конкурентном досупе), 
+				//но считаю это меньшим злом чем жесткую блокироку FindServerAndIncrement() еще и в момент уменьшения счетчика
+				//Потокобезопасная функция - инкремент
+				server.IncrementConnections();
+				return server;
 			}
 		}
 
-		public void ReleaseServer(int key) {
-			lock (locker) {
-				Servers[key].CurrentConnections -= 1;
-			}
+		public void Decrement(Server server) {
+			//Потокобезопасная функция - декремент
+			server.DecrementConnections();
 		}
-
 	}
 }

@@ -8,24 +8,21 @@ using System.Threading.Tasks;
 
 namespace Proxy {
 	public class ProxyServer : IProxyServer, IDisposable {
-		private readonly int port;
-		private readonly string ip;
-		private readonly int chunkSize;
+		private readonly int listeningPort;
+		private readonly int chunkSize = 2048;
 
 		private TcpListener tcpListener;
 		private readonly IServersManager serversManager;
 		private readonly ILogger logger;
 
 		private readonly CancellationTokenSource cts;
-		public ProxyServer(string ip, int port, int chunkSize, ILogger logger, IServersManager serversManager) {
-			this.port = port;
-			this.ip = ip;
-			
+		public ProxyServer(int listeningPort, ILogger logger, IServersManager serversManager) {
+			this.listeningPort = listeningPort;
+
 			this.logger = logger;
 			this.serversManager = serversManager;
-			this.chunkSize = chunkSize;
 
-			tcpListener = new TcpListener(IPAddress.Any, this.port);
+			tcpListener = new TcpListener(IPAddress.Any, this.listeningPort);
 			cts = new CancellationTokenSource();
 		}
 
@@ -35,12 +32,11 @@ namespace Proxy {
 				tcpListener.Start();
 				Task listeningTask = Task.Run(async () => {
 					while (!cts.IsCancellationRequested) {
-						var client = tcpListener.AcceptTcpClient();
-						var clientPort = ((IPEndPoint) client.Client.RemoteEndPoint).Port;
-						logger.Info($"IN ProxyServer.ListenForClients, New client attached, port = \"{clientPort}\"");
-						Task clientTask = this.HandleTcpClient(client);
-						
-						await Task.Delay(100);
+						var client = await tcpListener.AcceptTcpClientAsync();
+						var clientPort = ((IPEndPoint)client.Client.RemoteEndPoint).Port;
+						logger.Info($"IN ProxyServer.ListenForClients, New client attached, listeningPort = \"{clientPort}\"");
+						var server = serversManager.FindServerAndIncrement();
+						Task clientTask = this.HandleTcpClient(client, server);
 					}
 				});
 				return listeningTask;
@@ -52,25 +48,25 @@ namespace Proxy {
 			}
 		}
 
-		internal Task HandleTcpClient(TcpClient inboundClient) {
+		internal Task HandleTcpClient(TcpClient inboundClient, Server server) {
 			logger.Trace("IN ProxyServer.HandleTcpClient");
 			try {
 				var clientPort = ((IPEndPoint)inboundClient.Client.RemoteEndPoint).Port;
-				var serverKey = serversManager.GetAvailableServerKey();
-				var serverClient = new TcpClient(ip, serversManager.Servers[serverKey].Port);
+				var serverClient = new TcpClient(server.IP, server.Port);
 				Task clientTask = Task.Run(async () => {
 					try {
 						NetworkStream clientStream = inboundClient.GetStream();
 						NetworkStream serverStream = serverClient.GetStream();
 						Byte[] bytes = new Byte[chunkSize];
 						while (!cts.IsCancellationRequested && (await clientStream.ReadAsync(bytes, 0, bytes.Length) != 0)) {
-							logger.Info($"Received package from port = \"{clientPort}\", length = \"{bytes.Length}\"");
+							logger.Info($"Received package from listeningPort = \"{clientPort}\", length = \"{bytes.Length}\"");
 							serverStream.Write(bytes, 0, bytes.Length);
 						}
 					} finally {
 						inboundClient.Close();
-						serversManager.ReleaseServer(serverKey);
-						logger.Info($"IN ProxyServer.HandleTcpClient, client detached, port = \"{clientPort}\"");
+						//This method is thread safe
+						serversManager.Decrement(server);
+						logger.Info($"IN ProxyServer.HandleTcpClient, client detached, listeningPort = \"{clientPort}\"");
 					}
 				});
 				return clientTask;
