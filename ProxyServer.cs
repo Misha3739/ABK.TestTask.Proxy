@@ -1,6 +1,4 @@
 ﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -9,11 +7,11 @@ using System.Threading.Tasks;
 namespace Proxy {
 	public class ProxyServer : IProxyServer, IDisposable {
 		private readonly int listeningPort;
-		private readonly int chunkSize = 2048;
-
 		private TcpListener tcpListener;
 		private readonly IServersManager serversManager;
 		private readonly ILogger logger;
+
+		private int connectedClients;
 
 		private readonly CancellationTokenSource cts;
 		public ProxyServer(int listeningPort, ILogger logger, IServersManager serversManager) {
@@ -24,6 +22,7 @@ namespace Proxy {
 
 			tcpListener = new TcpListener(IPAddress.Any, this.listeningPort);
 			cts = new CancellationTokenSource();
+			connectedClients = 0;
 		}
 
 		public Task ListenForClients() {
@@ -34,9 +33,11 @@ namespace Proxy {
 					while (!cts.IsCancellationRequested) {
 						var client = await tcpListener.AcceptTcpClientAsync();
 						var clientPort = ((IPEndPoint)client.Client.RemoteEndPoint).Port;
+						Interlocked.Increment(ref connectedClients);
 						logger.Info($"IN ProxyServer.ListenForClients, New client attached, listeningPort = \"{clientPort}\"");
+						logger.Info($"CURRENT CLIENTS = \"{connectedClients}\"");
 						var server = serversManager.FindServerAndIncrementConnections();
-						Task clientTask = this.HandleTcpClient(client, server);
+						Task clientTask = HandleTcpClient(client, server);
 					}
 				});
 				return listeningTask;
@@ -57,18 +58,23 @@ namespace Proxy {
 					try {
 						await using NetworkStream clientStream = inboundClient.GetStream();
 						await using NetworkStream serverStream = serverClient.GetStream();
-						logger.Info(
-							$"Start streaming to server from client port = \"{clientPort}\" to server port = \"{server.Port}\"");
-						await clientStream.CopyToAsync(serverStream);
-						logger.Info(
-							$"Start streaming to client from server port = \"{server.Port}\" to client port = \"{clientPort}\"");
-						await serverStream.CopyToAsync(clientStream);
-						logger.Info($"Streaming within client port = \"{clientPort}\" and server port = \"{server.Port}\" completed");
+
+						Task clintToServerTask = clientStream.CopyToAsync(serverStream);
+						Task serverToClientTask = serverStream.CopyToAsync(clientStream);
+						await Task.WhenAny(clintToServerTask, serverToClientTask);
+					} catch (Exception e) {
+						logger.Error(e, "Streaming error occurred...");
 					} finally {
-						inboundClient.Close();
-						serverClient.Close();
+						try {
+							inboundClient.Close();
+							serverClient.Close();
+						} catch (Exception e) {
+							logger.Error(e, "Streaming dispose error occurred...");
+						}
 						serversManager.DecrementConnections(server);
 						logger.Info($"IN ProxyServer.HandleTcpClient, client detached, listeningPort = \"{clientPort}\"");
+						Interlocked.Decrement(ref connectedClients);
+						logger.Info($"CURRENT CLIENTS = \"{connectedClients}\"");
 					}
 				});
 				return clientTask;

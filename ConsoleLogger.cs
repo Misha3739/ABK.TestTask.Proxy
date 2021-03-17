@@ -16,7 +16,7 @@ namespace Proxy {
 
 		public void Error(Exception e, string message) {
 			var time = TimeToString();
-			Console.WriteLine($"{time} ERROR {message} {e.StackTrace}");
+			Console.WriteLine($"{time} ERROR {message} {e.Message} {e.StackTrace}");
 		}
 
 		private string TimeToString() {
