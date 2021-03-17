@@ -55,15 +55,18 @@ namespace Proxy {
 				var serverClient = new TcpClient(server.IP, server.Port);
 				Task clientTask = Task.Run(async () => {
 					try {
-						NetworkStream clientStream = inboundClient.GetStream();
-						NetworkStream serverStream = serverClient.GetStream();
-						Byte[] bytes = new Byte[chunkSize];
-						while (!cts.IsCancellationRequested && (await clientStream.ReadAsync(bytes, 0, bytes.Length) != 0)) {
-							logger.Info($"Received package from listeningPort = \"{clientPort}\", length = \"{bytes.Length}\"");
-							serverStream.Write(bytes, 0, bytes.Length);
-						}
+						await using NetworkStream clientStream = inboundClient.GetStream();
+						await using NetworkStream serverStream = serverClient.GetStream();
+						logger.Info(
+							$"Start streaming to server from client port = \"{clientPort}\" to server port = \"{server.Port}\"");
+						await clientStream.CopyToAsync(serverStream);
+						logger.Info(
+							$"Start streaming to client from server port = \"{server.Port}\" to client port = \"{clientPort}\"");
+						await serverStream.CopyToAsync(clientStream);
+						logger.Info($"Streaming within client port = \"{clientPort}\" and server port = \"{server.Port}\" completed");
 					} finally {
 						inboundClient.Close();
+						serverClient.Close();
 						serversManager.DecrementConnections(server);
 						logger.Info($"IN ProxyServer.HandleTcpClient, client detached, listeningPort = \"{clientPort}\"");
 					}
