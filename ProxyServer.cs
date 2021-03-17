@@ -35,7 +35,7 @@ namespace Proxy {
 						var client = await tcpListener.AcceptTcpClientAsync();
 						var clientPort = ((IPEndPoint)client.Client.RemoteEndPoint).Port;
 						logger.Info($"IN ProxyServer.ListenForClients, New client attached, listeningPort = \"{clientPort}\"");
-						var server = serversManager.FindServerAndIncrement();
+						var server = serversManager.FindServerAndIncrementConnections();
 						Task clientTask = this.HandleTcpClient(client, server);
 					}
 				});
@@ -64,8 +64,7 @@ namespace Proxy {
 						}
 					} finally {
 						inboundClient.Close();
-						//This method is thread safe
-						serversManager.Decrement(server);
+						serversManager.DecrementConnections(server);
 						logger.Info($"IN ProxyServer.HandleTcpClient, client detached, listeningPort = \"{clientPort}\"");
 					}
 				});

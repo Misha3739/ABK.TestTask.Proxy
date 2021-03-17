@@ -2,7 +2,7 @@
 
 namespace Proxy {
 	public interface IServersManager {
-		Server FindServerAndIncrement();
-		void Decrement(Server server);
+		Server FindServerAndIncrementConnections();
+		void DecrementConnections(Server server);
 	}
 }
